@@ -30,6 +30,57 @@ class KniffelBase(gym.Env):
 
     metadata: Mapping[AnyStr, Any] = {'render.modes': ['human']}
 
+    _slot_validators = [
+        # Upper Board
+        lambda self: self._dice_frequencies[0] > 0,
+        lambda self: self._dice_frequencies[1] > 0,
+        lambda self: self._dice_frequencies[2] > 0,
+        lambda self: self._dice_frequencies[3] > 0,
+        lambda self: self._dice_frequencies[4] > 0,
+        lambda self: self._dice_frequencies[5] > 0,
+        # Dreierpasch
+        lambda self: np.max(list(self._dice_frequencies.values())) >= 3,
+        # Viererpasch
+        lambda self: np.max(list(self._dice_frequencies.values())) >= 4,
+        # Full-House
+        lambda self: (2 in self._dice_frequencies.values()\
+                      and 3 in self._dice_frequencies.values())\
+                     or 5 in self._dice_frequencies.values(),
+        # Kleine Straße
+        lambda self: any(v in [[0, 1, 2, 3], [1, 2, 3, 4], [2, 3, 4, 5]]
+                         for v in (self._dices_sorted[0:4], self._dices_sorted[1:5])),
+        # Große Straße
+        lambda self: self._dices_sorted in ([0, 1, 2, 3, 4], [1, 2, 3, 4, 5]),
+        # Kniffel
+        lambda self: 5 in self._dice_frequencies.values(),
+        # Chance
+        lambda self: True,
+    ]
+
+    _slot_points = [
+        # Upper board
+        lambda self: np.sum(self._dices == 0) * 1,
+        lambda self: np.sum(self._dices == 1) * 2,
+        lambda self: np.sum(self._dices == 2) * 3,
+        lambda self: np.sum(self._dices == 3) * 4,
+        lambda self: np.sum(self._dices == 4) * 5,
+        lambda self: np.sum(self._dices == 5) * 6,
+        # Dreierpasch
+        lambda self: np.sum(self._dices) + 5,
+        # Viererpasch
+        lambda self: np.sum(self._dices) + 5,
+        # Full-House
+        lambda self: 25,
+        # Kleine Straße
+        lambda self: 30,
+        # Große Straße
+        lambda self: 40,
+        # Kniffel
+        lambda self: 50,
+        # Chance
+        lambda self: np.sum(self._dices) + 5,
+    ]
+
     def __init__(self):
         self.reset()
 
@@ -112,6 +163,21 @@ class KniffelBase(gym.Env):
         self._dices[~mask] = np.random.randint(low=0, high=6, size=(5,))[~mask]
         self._num_rolls_remaining -= 1
 
+        # Count the dices because some detections are easier with them
+        self._dice_frequencies.clear()
+        for dice in self._dices:
+            self._dice_frequencies[dice] += 1
+
+        # Sort the dices because some detections are easier with them
+        self._dices_sorted = sorted(self._dices)
+
+    def _points_at(self, index):
+        """Calculates a mask for the board that shows current possible moves.
+        """
+        if self._slot_validators[index](self):
+            return self._slot_points[index](self)
+        return 0
+
     def _select(self, index):
         """Fills a given slot in the board.
 
@@ -125,53 +191,10 @@ class KniffelBase(gym.Env):
             raise KniffelError("The selected field already is filled!")
         self._filled_mask[index] = True
 
-        # Count the dices because some detections are easier with them
-        dices = defaultdict(int)
-        for dice in self._dices:
-            dices[dice] += 1
+        points = self._points_at(index)
+        self._board[index] = points
 
-        # Upper board
-        if index <= 5:
-            self._board[index] = np.sum(self._dices == index) * (index + 1)
-
-        # Dreierpasch
-        elif index == 6:
-            if np.max(list(dices.values())) >= 3:
-                self._board[index] = np.sum(self._dices) + 5
-
-        # Viererpasch
-        elif index == 7:
-            if np.max(list(dices.values())) >= 4:
-                self._board[index] = np.sum(self._dices) + 5
-
-        # Full-House
-        elif index == 8:
-            if 5 in dices.values()\
-              or (2 in dices.values() and 3 in dices.values()):
-                self._board[index] = 25
-
-        # Kleine Straße
-        elif index == 9:
-            sort = sorted(self._dices)
-            if any(v in [[0, 1, 2, 3], [1, 2, 3, 4], [2, 3, 4, 5]]
-                   for v in (sort[0:4], sort[1:5])):
-                self._board[index] = 30
-
-        # Große Straße
-        elif index == 10:
-            sort = sorted(self._dices)
-            if sort in ([0, 1, 2, 3, 4], [1, 2, 3, 4, 5]):
-                self._board[index] = 40
-        # Kniffel
-        elif index == 11:
-            if 5 in dices.values():
-                self._board[index] = 50
-                # TODO: multiple kniffels!
-
-        # Chance
-        elif index == 12:
-            # chance is always valid
-            self._board[index] = np.sum(self._dices) + 5
+        # TODO: Handle multiple Kniffels!
 
         self._num_rolls_remaining = 3
         self._roll()
@@ -184,6 +207,7 @@ class KniffelBase(gym.Env):
 
         self._num_rolls_remaining = 3
         self._dices = np.zeros((5,), dtype=np.int64)
+        self._dice_frequencies = defaultdict(int)
         self._roll()
 
         return self.observe()
@@ -215,19 +239,25 @@ class Kniffel(KniffelBase):
     """
     action_space: gym.spaces.Dict = gym.spaces.Dict({
         "dices_hold": gym.spaces.MultiBinary(5),
-        "board_selection": gym.spaces.Discrete(6 + 7),
+        "board_selection": gym.spaces.Discrete(13),
         "select_action": gym.spaces.Discrete(2),
     })
 
     observation_space: gym.spaces.Dict = gym.spaces.Dict({
+        "board": gym.spaces.Box(low=0, high=50, shape=(13,), dtype=np.int64),
+        "filled_slots": gym.spaces.Box(low=0, high=50, shape=(13,), dtype=np.int64),
+        "possible_moves": gym.spaces.Box(low=0, high=50, shape=(13,), dtype=np.int64),
         "num_rolls_remaining": gym.spaces.Discrete(3),
-        "dices": gym.spaces.MultiDiscrete([6, 6, 6, 6, 6])
+        "dices": gym.spaces.MultiDiscrete([6] * 5)
     })
 
     def observe(self):
         return {
             "board": self._board,
-            "board_mask": self._filled_mask,
+            "filled_slots": self._filled_mask,
+            "possible_moves": [val(self) and not filled
+                               for val, filled in
+                               zip(self._slot_validators, self._filled_mask)],
             "num_rolls_remaining": self._num_rolls_remaining,
             "dices": self._dices,
         }
