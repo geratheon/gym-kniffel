@@ -30,6 +30,8 @@ class KniffelBase(gym.Env):
 
     metadata: Mapping[AnyStr, Any] = {'render.modes': ['ansi']}
 
+    _max_points = [5, 10, 15, 20, 25, 30, 30, 30, 25, 30, 40, 50, 30]
+
     _slot_validators = [
         # Upper Board
         lambda self: self._dice_frequencies[0] > 0,
@@ -196,11 +198,17 @@ class KniffelBase(gym.Env):
             raise KniffelError("The selected field already is filled!")
         self._filled_mask[index] = True
 
-        points = self._points_at(index)
-        self._board[index] = points
+        # in the case of multiple kniffels, give 50 extra points and a joker
+        # for a given field which counts as the best possible value
+        if self._filled_mask[11] and self._board[11] > 0 and self._slot_validators[11](self):
+            self._board[11] += 50
+            self._board[index] = self._max_points[index]
+        else:
+            # write the points in the given slot
+            points = self._points_at(index)
+            self._board[index] = points
 
-        # TODO: Handle multiple Kniffels!
-
+        # re-roll
         self._num_rolls_remaining = 3
         self._roll()
 
@@ -220,14 +228,14 @@ class KniffelBase(gym.Env):
     def step(self, action):
         bonus = self._bonus
         score = np.sum(np.maximum(self._board, 0))
-        self.act(action)
+        reward = self.act(action)
         return self.observe(),\
-            None,\
+            reward,\
             (self._filled_mask > 0).all(),\
             {"full_score": score+bonus}
 
     @abstractmethod
-    def act(self, action):
+    def act(self, action) -> float:
         """Steps the world with a given action in respective to self.action_space.
         """
         raise NotImplementedError
@@ -265,17 +273,18 @@ class Kniffel(KniffelBase):
             "dices": self._dices,
         }
 
-    def act(self, action):
+    def act(self, action) -> float:
+        pre = np.sum(self._board) + self._bonus
         try:
             if action['select_action'] == 0:
                 self._roll(action['dices_hold'])
             else:
                 self._select(action['board_selection'])
         except KniffelError:
-            # On a KniffelError do nothing.
-            # TODO: Reward -1, so invalid moves are discouraged.
-            pass
-
+            # On a KniffelError do nothing, but reward a -1.
+            return -1
+        post = np.sum(self._board) + self._bonus
+        return post - pre
 
 def play_kniffel():
     """Calling the module should let you play kniffel interactively as a human.
@@ -286,6 +295,7 @@ def play_kniffel():
     observation = env.reset()
     done = False
     steps = 0
+    rewards = []
     while not done:
         steps += 1
 
@@ -295,9 +305,16 @@ def play_kniffel():
             action['select_action'] = 1
             action['board_selection'] = np.argmax(observation['slots_value'])
 
-        observation, _, done, info = env.step(action)
+        observation, reward, done, info = env.step(action)
+        if done:
+            env.reset()
+            done = False
+        rewards.append(reward)
+
     env.render()
-    print(f"Board full in {steps} actions with {info['full_score']} Points!")
+    print(f"Board full in {steps} actions "
+          f"with {info['full_score']} Points "
+          f"(and a reward of {sum(rewards)})!")
 
 
 if __name__ == "__main__":
