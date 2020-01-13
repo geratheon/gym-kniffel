@@ -69,7 +69,13 @@ class KniffelBase(gym.Env):
         lambda self: np.sum(self._dices) + 5,
     ]
 
-    def __init__(self):
+    def seed(self, seed=None):
+        self._rnd = np.random.default_rng(seed)
+        self.observation_space.seed(seed)
+        self.action_space.seed(seed)
+        return [seed]
+
+    def __init__(self, seed=None):
         self._board = np.zeros((6 + 7,), dtype=np.int64)
         self._filled_mask = np.zeros(self._board.shape, dtype=np.int64)
         self._upper = self._board[:6]
@@ -77,6 +83,8 @@ class KniffelBase(gym.Env):
         self._dices = np.zeros((5,), dtype=np.int64)
         self._dice_frequencies = defaultdict(int)
         self._num_rolls_remaining = 3
+        self.seed(seed)
+
         self._roll()
 
     def __init_subclass__(cls):
@@ -162,7 +170,7 @@ class KniffelBase(gym.Env):
         mask = np.asarray(mask if mask is not None else [False] * 5)
         if mask.all():
             raise KniffelError("Keeping everything is not a valid move!")
-        self._dices[~mask] = np.random.randint(low=0, high=6, size=(5,))[~mask]
+        self._dices[~mask] = self._rnd.integers(low=0, high=6, size=(5,))[~mask]
         self._num_rolls_remaining -= 1
 
         # Count the dices because some detections are easier with them
@@ -285,7 +293,7 @@ def play_kniffel():
 
     Right now it doesn't.
     """
-    env = Kniffel()
+    env = Kniffel(seed=1337)
     observation = env.reset()
     done = False
     steps = 0
