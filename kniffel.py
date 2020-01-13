@@ -15,6 +15,7 @@ from abc import abstractmethod
 import numpy as np
 
 import gym
+from gym.spaces import Box, Dict, MultiDiscrete, Discrete, MultiBinary
 
 
 class KniffelError(Exception):
@@ -33,58 +34,50 @@ class KniffelBase(gym.Env):
     _max_points = [5, 10, 15, 20, 25, 30, 30, 30, 25, 30, 40, 50, 30]
 
     _slot_validators = [
-        # Upper Board
         lambda self: self._dice_frequencies[0] > 0,
         lambda self: self._dice_frequencies[1] > 0,
         lambda self: self._dice_frequencies[2] > 0,
         lambda self: self._dice_frequencies[3] > 0,
         lambda self: self._dice_frequencies[4] > 0,
         lambda self: self._dice_frequencies[5] > 0,
-        # Dreierpasch
         lambda self: np.max(list(self._dice_frequencies.values())) >= 3,
-        # Viererpasch
         lambda self: np.max(list(self._dice_frequencies.values())) >= 4,
-        # Full-House
-        lambda self: (2 in self._dice_frequencies.values()\
-                      and 3 in self._dice_frequencies.values())\
-                     or 5 in self._dice_frequencies.values(),
-        # Kleine Straße
+        lambda self: ((2 in self._dice_frequencies.values()
+                       and 3 in self._dice_frequencies.values())
+                      or 5 in self._dice_frequencies.values()),
         lambda self: any(v in [[0, 1, 2, 3], [1, 2, 3, 4], [2, 3, 4, 5]]
-                         for v in (self._dices_sorted[0:4], self._dices_sorted[1:5])),
-        # Große Straße
+                         for v in (self._dices_sorted[0:4],
+                                   self._dices_sorted[1:5])),
         lambda self: self._dices_sorted in ([0, 1, 2, 3, 4], [1, 2, 3, 4, 5]),
-        # Kniffel
         lambda self: 5 in self._dice_frequencies.values(),
-        # Chance
         lambda self: True,
     ]
 
     _slot_points = [
-        # Upper board
         lambda self: np.sum(self._dices == 0) * 1,
         lambda self: np.sum(self._dices == 1) * 2,
         lambda self: np.sum(self._dices == 2) * 3,
         lambda self: np.sum(self._dices == 3) * 4,
         lambda self: np.sum(self._dices == 4) * 5,
         lambda self: np.sum(self._dices == 5) * 6,
-        # Dreierpasch
         lambda self: np.sum(self._dices) + 5,
-        # Viererpasch
         lambda self: np.sum(self._dices) + 5,
-        # Full-House
         lambda self: 25,
-        # Kleine Straße
         lambda self: 30,
-        # Große Straße
         lambda self: 40,
-        # Kniffel
         lambda self: 50,
-        # Chance
         lambda self: np.sum(self._dices) + 5,
     ]
 
     def __init__(self):
-        self.reset()
+        self._board = np.zeros((6 + 7,), dtype=np.int64)
+        self._filled_mask = np.zeros(self._board.shape, dtype=np.int64)
+        self._upper = self._board[:6]
+        self._lower = self._board[-7:]
+        self._dices = np.zeros((5,), dtype=np.int64)
+        self._dice_frequencies = defaultdict(int)
+        self._num_rolls_remaining = 3
+        self._roll()
 
     def __init_subclass__(cls):
         assert getattr(cls, "action_space", None) is not None,\
@@ -96,7 +89,7 @@ class KniffelBase(gym.Env):
     def _bonus(self):
         """Calculates the current bonus of the upper board state.
         """
-        return 35 if np.sum(np.maximum(self._upper, 0)) >= 63 else 0
+        return 35 if np.sum(self._upper) >= 63 else 0
 
     @property
     def _slots_value(self):
@@ -106,15 +99,17 @@ class KniffelBase(gym.Env):
         """
         return np.fromiter((points(self) if (valid(self) and not filled) else 0
                             for valid, points, filled in
-                            zip(self._slot_validators, self._slot_points, self._filled_mask)),
+                            zip(self._slot_validators,
+                                self._slot_points,
+                                self._filled_mask)),
                            dtype=np.int64)
 
     def render(self, mode='ansi'):
         assert mode == 'ansi', f"Rendering mode '{mode}' is not supported!"
 
         bonus = self._bonus
-        upper = np.sum(np.maximum(self._upper, 0))
-        lower = np.sum(np.maximum(self._lower, 0))
+        upper = np.sum(self._upper)
+        lower = np.sum(self._lower)
 
         def fmt(val, filled):
             if val == 0:
@@ -126,7 +121,7 @@ class KniffelBase(gym.Env):
         d_b = ["   ", "  o", "  o", "o o", "o o", "o o"]
 
         can_be_filled = [val(self) for val in self._slot_validators]
-        print( # yeah.. not pretty. it is one statement, though! TODO pretty
+        print(  # yeah.. not pretty. it is one statement, though! TODO pretty
             "╔═══════════════╦═════╗" "╔═════╗\n"
             f"║ \033[{'1' if can_be_filled[0] else ''}mEinser\033[0m  ⚀ ⚀ ⚀ " "║ {:>3} ║" f"║ {d_t[self._dices[0]]} ║\n"
             f"║ \033[{'1' if can_be_filled[1] else ''}mZweier\033[0m  ⚁ ⚁ ⚁ " "║ {:>3} ║" f"║ {d_m[self._dices[0]]} ║\n"
@@ -200,7 +195,9 @@ class KniffelBase(gym.Env):
 
         # in the case of multiple kniffels, give 50 extra points and a joker
         # for a given field which counts as the best possible value
-        if self._filled_mask[11] and self._board[11] > 0 and self._slot_validators[11](self):
+        if self._filled_mask[11]\
+                and self._board[11] > 0\
+                and self._slot_validators[11](self):
             self._board[11] += 50
             self._board[index] = self._max_points[index]
         else:
@@ -213,16 +210,12 @@ class KniffelBase(gym.Env):
         self._roll()
 
     def reset(self):
-        self._board = np.zeros((6 + 7,), dtype=np.int64)
-        self._filled_mask = np.zeros(self._board.shape, dtype=np.int64)
-        self._upper = self._board[:6]
-        self._lower = self._board[-7:]
-
+        self._board.fill(0)
+        self._filled_mask.fill(0)
+        self._dices.fill(0)
+        self._dice_frequencies.clear()
         self._num_rolls_remaining = 3
-        self._dices = np.zeros((5,), dtype=np.int64)
-        self._dice_frequencies = defaultdict(int)
         self._roll()
-
         return self.observe()
 
     def step(self, action):
@@ -250,18 +243,18 @@ class KniffelBase(gym.Env):
 class Kniffel(KniffelBase):
     """A default implementation of Kniffel with simple dict spaces.
     """
-    action_space: gym.spaces.Dict = gym.spaces.Dict({
-        "dices_hold": gym.spaces.MultiBinary(5),
-        "board_selection": gym.spaces.Discrete(13),
-        "select_action": gym.spaces.Discrete(2),
+    action_space: Dict = Dict({
+        "dices_hold": MultiBinary(5),
+        "board_selection": Discrete(13),
+        "select_action": Discrete(2),
     })
 
-    observation_space: gym.spaces.Dict = gym.spaces.Dict({
-        "board": gym.spaces.Box(low=0, high=50, shape=(13,), dtype=np.int64),
-        "filled_slots": gym.spaces.Box(low=0, high=50, shape=(13,), dtype=np.int64),
-        "slots_value": gym.spaces.Box(low=0, high=50, shape=(13,), dtype=np.int64),
-        "num_rolls_remaining": gym.spaces.Discrete(3),
-        "dices": gym.spaces.MultiDiscrete([6] * 5)
+    observation_space: Dict = Dict({
+        "board": Box(low=0, high=50, shape=(13,), dtype=np.int64),
+        "filled_slots": Box(low=0, high=50, shape=(13,), dtype=np.int64),
+        "slots_value": Box(low=0, high=50, shape=(13,), dtype=np.int64),
+        "num_rolls_remaining": Discrete(3),
+        "dices": MultiDiscrete([6] * 5)
     })
 
     def observe(self):
@@ -286,6 +279,7 @@ class Kniffel(KniffelBase):
         post = np.sum(self._board) + self._bonus
         return post - pre
 
+
 def play_kniffel():
     """Calling the module should let you play kniffel interactively as a human.
 
@@ -306,15 +300,16 @@ def play_kniffel():
             action['board_selection'] = np.argmax(observation['slots_value'])
 
         observation, reward, done, info = env.step(action)
-        if done:
-            env.reset()
-            done = False
         rewards.append(reward)
 
     env.render()
     print(f"Board full in {steps} actions "
           f"with {info['full_score']} Points "
           f"(and a reward of {sum(rewards)})!")
+
+    # import matplotlib.pyplot as plt
+    # plt.plot(np.cumsum(rewards))
+    # plt.show()
 
 
 if __name__ == "__main__":
