@@ -153,7 +153,8 @@ class KniffelBase(gym.Env):
             f"║ Gesamt unten  ║ {lower:>3} ║╚═════╝\n"
             f"║ Gesamt oben   ║ {upper+bonus:>3} ║\n"
             f"║ Endstand      ║ {lower+upper+bonus:>3} ║\n"
-            "╚═══════════════╩═════╝"
+            "╚═══════════════╩═════╝\n"
+            f"-> Rolls available: {''.join('X' for _ in range(self._num_rolls_remaining))}"
             .format(*(fmt(val, filled) for val, filled
                       in zip(self._board, self._filled_mask)))
         )
@@ -259,7 +260,7 @@ class Kniffel(KniffelBase):
 
     observation_space: Dict = Dict({
         "board": Box(low=0, high=50, shape=(13,), dtype=np.int64),
-        "filled_slots": Box(low=0, high=50, shape=(13,), dtype=np.int64),
+        "filled_slots": MultiBinary(13),
         "slots_value": Box(low=0, high=50, shape=(13,), dtype=np.int64),
         "num_rolls_remaining": Discrete(3),
         "dices": MultiDiscrete([6] * 5)
@@ -293,7 +294,7 @@ def play_kniffel():
 
     Right now it doesn't.
     """
-    env = Kniffel(seed=1337)
+    env = Kniffel()
     observation = env.reset()
     done = False
     steps = 0
