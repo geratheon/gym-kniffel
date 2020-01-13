@@ -28,7 +28,7 @@ class KniffelBase(gym.Env):
     observation_space: gym.spaces.Space
     action_space: gym.spaces.Space
 
-    metadata: Mapping[AnyStr, Any] = {'render.modes': ['human']}
+    metadata: Mapping[AnyStr, Any] = {'render.modes': ['ansi']}
 
     _slot_validators = [
         # Upper Board
@@ -96,8 +96,19 @@ class KniffelBase(gym.Env):
         """
         return 35 if np.sum(np.maximum(self._upper, 0)) >= 63 else 0
 
-    def render(self, mode='human'):
-        assert mode == 'human', f"Rendering mode '{mode}' is not supported!"
+    @property
+    def _slots_value(self):
+        """Returns the value for all slots with the current dices.
+
+        An already filled slot is always a 0.
+        """
+        return np.fromiter((points(self) if (valid(self) and not filled) else 0
+                            for valid, points, filled in
+                            zip(self._slot_validators, self._slot_points, self._filled_mask)),
+                           dtype=np.int64)
+
+    def render(self, mode='ansi'):
+        assert mode == 'ansi', f"Rendering mode '{mode}' is not supported!"
 
         bonus = self._bonus
         upper = np.sum(np.maximum(self._upper, 0))
@@ -108,43 +119,37 @@ class KniffelBase(gym.Env):
                 return 'xxx' if filled else ''
             return val
 
-        dices = defaultdict(int)
-        for dice in self._dices:
-            dices[dice] += 1
+        d_t = ["   ", "o  ", "o  ", "o o", "o o", "o o"]
+        d_m = [" o ", "   ", " o ", "   ", " o ", "o o"]
+        d_b = ["   ", "  o", "  o", "o o", "o o", "o o"]
 
-        print(
-            "╔═══════════════╦═════╗\n"
-            "║ Einser  ⚀ ⚀ ⚀ ║ {:>3} ║"
-            f" {''.join('⚀' for _ in range(dices[0]))}\n"
-            "║ Zweier  ⚁ ⚁ ⚁ ║ {:>3} ║"
-            f" {''.join('⚁' for _ in range(dices[1]))}\n"
-            "║ Dreier  ⚂ ⚂ ⚂ ║ {:>3} ║"
-            f" {''.join('⚂' for _ in range(dices[2]))}\n"
-            "║ Vierer  ⚃ ⚃ ⚃ ║ {:>3} ║"
-            f" {''.join('⚃' for _ in range(dices[3]))}\n"
-            "║ Fünfer  ⚄ ⚄ ⚄ ║ {:>3} ║"
-            f" {''.join('⚄' for _ in range(dices[4]))}\n"
-            "║ Sechser ⚅ ⚅ ⚅ ║ {:>3} ║"
-            f" {''.join('⚅' for _ in range(dices[5]))}\n"
-            "╟───────────────╫─────╢\n"
-            f"║ Gesamt        ║ {upper:>3} ║\n"
-            f"║ Bonus         ║ {bonus:>3} ║\n"
-            f"║ Gesamt oben   ║ {upper+bonus:>3} ║\n"
-            "╠═══════════════╬═════╣\n"
-            "║ Dreierpasch   ║ {:>3} ║\n"
-            "║ Viererpasch   ║ {:>3} ║\n"
-            "║ Full-House    ║ {:>3} ║\n"
-            "║ Kleine Straße ║ {:>3} ║\n"
-            "║ Große Straße  ║ {:>3} ║\n"
-            "║ Kniffel       ║ {:>3} ║\n"
-            "║ Chance        ║ {:>3} ║\n"
-            "╟───────────────╫─────╢\n"
-            f"║ Gesamt unten  ║ {lower:>3} ║\n"
+        can_be_filled = [val(self) for val in self._slot_validators]
+        print( # yeah.. not pretty. it is one statement, though! TODO pretty
+            "╔═══════════════╦═════╗" "╔═════╗\n"
+            f"║ \033[{'1' if can_be_filled[0] else ''}mEinser\033[0m  ⚀ ⚀ ⚀ " "║ {:>3} ║" f"║ {d_t[self._dices[0]]} ║\n"
+            f"║ \033[{'1' if can_be_filled[1] else ''}mZweier\033[0m  ⚁ ⚁ ⚁ " "║ {:>3} ║" f"║ {d_m[self._dices[0]]} ║\n"
+            f"║ \033[{'1' if can_be_filled[2] else ''}mDreier\033[0m  ⚂ ⚂ ⚂ " "║ {:>3} ║" f"║ {d_b[self._dices[0]]} ║\n"
+            f"║ \033[{'1' if can_be_filled[3] else ''}mVierer\033[0m  ⚃ ⚃ ⚃ " "║ {:>3} ║╠═════╣\n"
+            f"║ \033[{'1' if can_be_filled[4] else ''}mFünfer\033[0m  ⚄ ⚄ ⚄ " "║ {:>3} ║" f"║ {d_t[self._dices[1]]} ║\n"
+            f"║ \033[{'1' if can_be_filled[5] else ''}mSechser\033[0m ⚅ ⚅ ⚅ " "║ {:>3} ║" f"║ {d_m[self._dices[1]]} ║\n"
+            "╟───────────────╫─────╢" f"║ {d_b[self._dices[1]]} ║\n"
+            f"║ Gesamt        ║ {upper:>3} ║╠═════╣\n"
+            f"║ Bonus         ║ {bonus:>3} ║║ {d_t[self._dices[2]]} ║\n"
+            f"║ Gesamt oben   ║ {upper+bonus:>3} ║║ {d_m[self._dices[2]]} ║\n"
+            f"╠═══════════════╬═════╣║ {d_b[self._dices[2]]} ║\n"
+            f"║ \033[{'1' if can_be_filled[6] else ''}mDreierpasch\033[0m   " "║ {:>3} ║╠═════╣\n"
+            f"║ \033[{'1' if can_be_filled[7] else ''}mViererpasch\033[0m   " "║ {:>3} ║" f"║ {d_t[self._dices[3]]} ║\n"
+            f"║ \033[{'1' if can_be_filled[8] else ''}mFull-House\033[0m    " "║ {:>3} ║" f"║ {d_m[self._dices[3]]} ║\n"
+            f"║ \033[{'1' if can_be_filled[9] else ''}mKleine Straße\033[0m " "║ {:>3} ║" f"║ {d_b[self._dices[3]]} ║\n"
+            f"║ \033[{'1' if can_be_filled[10] else ''}mGroße Straße\033[0m  " "║ {:>3} ║╠═════╣\n"
+            f"║ \033[{'1' if can_be_filled[11] else ''}mKniffel\033[0m       " "║ {:>3} ║" f"║ {d_t[self._dices[4]]} ║\n"
+            f"║ \033[{'1' if can_be_filled[12] else ''}mChance\033[0m        " "║ {:>3} ║" f"║ {d_m[self._dices[4]]} ║\n"
+            f"╟───────────────╫─────╢║ {d_b[self._dices[4]]} ║\n"
+            f"║ Gesamt unten  ║ {lower:>3} ║╚═════╝\n"
             f"║ Gesamt oben   ║ {upper+bonus:>3} ║\n"
             f"║ Endstand      ║ {lower+upper+bonus:>3} ║\n"
             "╚═══════════════╩═════╝"
-            .format(*(fmt(val, filled)
-                      for val, filled
+            .format(*(fmt(val, filled) for val, filled
                       in zip(self._board, self._filled_mask)))
         )
 
@@ -246,7 +251,7 @@ class Kniffel(KniffelBase):
     observation_space: gym.spaces.Dict = gym.spaces.Dict({
         "board": gym.spaces.Box(low=0, high=50, shape=(13,), dtype=np.int64),
         "filled_slots": gym.spaces.Box(low=0, high=50, shape=(13,), dtype=np.int64),
-        "possible_moves": gym.spaces.Box(low=0, high=50, shape=(13,), dtype=np.int64),
+        "slots_value": gym.spaces.Box(low=0, high=50, shape=(13,), dtype=np.int64),
         "num_rolls_remaining": gym.spaces.Discrete(3),
         "dices": gym.spaces.MultiDiscrete([6] * 5)
     })
@@ -255,9 +260,7 @@ class Kniffel(KniffelBase):
         return {
             "board": self._board,
             "filled_slots": self._filled_mask,
-            "possible_moves": [val(self) and not filled
-                               for val, filled in
-                               zip(self._slot_validators, self._filled_mask)],
+            "slots_value": self._slots_value,
             "num_rolls_remaining": self._num_rolls_remaining,
             "dices": self._dices,
         }
@@ -285,7 +288,15 @@ def play_kniffel():
     steps = 0
     while not done:
         steps += 1
-        observation, _, done, info = env.step(env.action_space.sample())
+
+        # move random but select the best possible slots
+        action = env.action_space.sample()
+        if any(m > 0 for m in observation['slots_value']):
+            action['select_action'] = 1
+            action['board_selection'] = np.argmax(observation['slots_value'])
+
+        observation, _, done, info = env.step(action)
+    env.render()
     print(f"Board full in {steps} actions with {info['full_score']} Points!")
 
 
