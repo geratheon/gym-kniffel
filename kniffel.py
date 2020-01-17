@@ -22,7 +22,6 @@ class KniffelError(Exception):
     """The Exception that will be raised if the user tries anything illegal.
     """
 
-
 class KniffelBase(gym.Env):
     """An extendable OpenAI Gym compliant Environment for Kniffel.
     """
@@ -291,6 +290,34 @@ class Kniffel(KniffelBase):
         return post - pre
 
 
+def greedy_policy(observation):
+    """A greedy policy usable with the Kniffel class.
+    """
+    # move random but select the best possible slots
+    action = Kniffel.action_space.sample()
+
+    # if anything can give you points, take the most greedy thing!
+    if any(m > 0 for m in observation['slots_value']):
+        action['select_action'] = 1
+        action['board_selection'] = np.argmax(observation['slots_value'])
+
+    # reroll if you can
+    elif observation['num_rolls_remaining'] > 0:
+        action['select_action'] = 0
+        action['dices_hold'] = [False] * 5
+
+    # if nothing is possible, cross out the
+    # field with the worst points possible
+    else:
+        action['select_action'] = 1
+        action['board_selection'] = next(i for i, (filled, _)
+         in sorted(enumerate(zip(observation['filled_slots'], KniffelBase._max_points)),
+             key=lambda x: x[1])
+         if not filled)
+
+    return action
+
+
 def play_kniffel():
     """Calling the module should let you play kniffel interactively as a human.
 
@@ -304,27 +331,7 @@ def play_kniffel():
     while not done:
         steps += 1
 
-        # move random but select the best possible slots
-        action = env.action_space.sample()
-
-        # if anything can give you points, take the most greedy thing!
-        if any(m > 0 for m in observation['slots_value']):
-            action['select_action'] = 1
-            action['board_selection'] = np.argmax(observation['slots_value'])
-
-        # reroll if you can
-        elif observation['num_rolls_remaining'] > 0:
-            action['select_action'] = 0
-            action['dices_hold'] = [False] * 5
-
-        # if nothing is possible, cross out the
-        # field with the worst points possible
-        else:
-            action['select_action'] = 1
-            action['board_selection'] = next(i for i, (filled, _)
-             in sorted(enumerate(zip(observation['filled_slots'], env._max_points)),
-                 key=lambda x: x[1])
-             if not filled)
+        action = greedy_policy(observation)
 
         observation, reward, done, info = env.step(action)
         rewards.append(reward)
