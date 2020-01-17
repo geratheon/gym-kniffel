@@ -104,6 +104,8 @@ class KniffelBase(gym.Env):
         """Returns the value for all slots with the current dices.
 
         An already filled slot is always a 0.
+
+        This does not include multiple kniffels and/or the upper board bonus.
         """
         return np.fromiter((points(self) if (valid(self) and not filled) else 0
                             for valid, points, filled in
@@ -292,7 +294,7 @@ class Kniffel(KniffelBase):
 def play_kniffel():
     """Calling the module should let you play kniffel interactively as a human.
 
-    Right now it doesn't.
+    Right now it doesn't. It just plays a full round with a greedy policy.
     """
     env = Kniffel()
     observation = env.reset()
@@ -304,17 +306,33 @@ def play_kniffel():
 
         # move random but select the best possible slots
         action = env.action_space.sample()
+
+        # if anything can give you points, take the most greedy thing!
         if any(m > 0 for m in observation['slots_value']):
             action['select_action'] = 1
             action['board_selection'] = np.argmax(observation['slots_value'])
+
+        # reroll if you can
+        elif observation['num_rolls_remaining'] > 0:
+            action['select_action'] = 0
+            action['dices_hold'] = [False] * 5
+
+        # if nothing is possible, cross out the
+        # field with the worst points possible
+        else:
+            action['select_action'] = 1
+            action['board_selection'] = next(i for i, (filled, _)
+             in sorted(enumerate(zip(observation['filled_slots'], env._max_points)),
+                 key=lambda x: x[1])
+             if not filled)
 
         observation, reward, done, info = env.step(action)
         rewards.append(reward)
 
     env.render()
-    print(f"Board full in {steps} actions "
-          f"with {info['full_score']} Points "
-          f"(and a reward of {sum(rewards)})!")
+    print(f"Board full in {steps} actions"
+          f" with {info['full_score']} Points"
+          f" (and a reward of {sum(rewards)})!")
 
     # import matplotlib.pyplot as plt
     # plt.plot(np.cumsum(rewards))
